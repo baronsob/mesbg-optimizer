@@ -5,3 +5,4 @@ matplotlib
 pytest
 streamlit
 plotly
+altair

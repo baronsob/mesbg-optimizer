@@ -2,6 +2,7 @@ import copy
 import json
 from collections import Counter
 from pathlib import Path
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -10,10 +11,7 @@ from mesbg_optimizer import (
     BUCKETS,
     config_to_armies,
     load_config,
-    load_results,
     optimize_tournament,
-    save_config,
-    save_results,
     validate_armies,
 )
 
@@ -28,18 +26,6 @@ DEFAULT_CONFIG_FILE = (
     BASE_DIR
     / "data"
     / "default_config_v3.json"
-)
-
-USER_CONFIG_FILE = (
-    BASE_DIR
-    / "data"
-    / "user_config.json"
-)
-
-RESULTS_FILE = (
-    BASE_DIR
-    / "results"
-    / "latest_results.json"
 )
 
 
@@ -58,24 +44,9 @@ st.set_page_config(
 # Configuration helpers
 # ============================================================================
 
-def ensure_user_config() -> None:
-    """Create user config from default config if it does not exist."""
-    if USER_CONFIG_FILE.exists():
-        return
-
-    default_config = load_config(DEFAULT_CONFIG_FILE)
-
-    save_config(
-        default_config,
-        USER_CONFIG_FILE,
-    )
-
-
-def load_user_config() -> dict:
-    """Load the current editable user configuration."""
-    ensure_user_config()
-
-    return load_config(USER_CONFIG_FILE)
+def load_default_config() -> dict:
+    """Load the default configuration for a new session."""
+    return load_config(DEFAULT_CONFIG_FILE)
 
 
 def config_to_base_dataframe(
@@ -109,7 +80,9 @@ def config_to_modifier_dataframe(
     rows = []
 
     for army, data in config["ratings"].items():
-        row = {"Army": army}
+        row = {
+            "Army": army,
+        }
 
         for scenario in scenarios:
             row[scenario] = data[
@@ -174,7 +147,9 @@ def apply_modifier_dataframe(
     return updated
 
 
-def validate_config_dict(config: dict) -> dict:
+def validate_config_dict(
+    config: dict,
+) -> dict:
     """Validate an in-memory config and return Army objects."""
     armies = config_to_armies(config)
 
@@ -183,42 +158,34 @@ def validate_config_dict(config: dict) -> dict:
     return armies
 
 
-def reset_user_config() -> None:
-    """Reset user config to the default config."""
-    default_config = load_config(
-        DEFAULT_CONFIG_FILE
-    )
-
-    save_config(
-        default_config,
-        USER_CONFIG_FILE,
-    )
-
-
 # ============================================================================
 # Result helpers
 # ============================================================================
 
-def format_team(team: list[str]) -> str:
+def format_team(
+    team: tuple[str, ...] | list[str],
+) -> str:
     """Format a team for display."""
     return " + ".join(team)
 
 
-def result_to_ranking_row(result: dict) -> dict:
-    """Convert one result into a ranking-table row."""
+def result_to_ranking_row(
+    result,
+) -> dict:
+    """Convert a TeamResult into a ranking-table row."""
     return {
-        "Global Rank": result["rank"],
-        "Team": format_team(result["team"]),
-        "Expected Score": result["total_score"],
-        "Expected %": result["average_score"] * 100,
+        "Global Rank": result.rank,
+        "Team": format_team(result.team),
+        "Expected Score": result.total_score,
+        "Expected %": result.average_score * 100,
     }
 
 
 def filter_results(
-    results: list[dict],
+    results: list,
     selected_armies: list[str],
     mode: str,
-) -> list[dict]:
+) -> list:
     """
     Filter teams by army membership.
 
@@ -238,7 +205,7 @@ def filter_results(
             result
             for result in results
             if selected.issubset(
-                set(result["team"])
+                set(result.team)
             )
         ]
 
@@ -246,16 +213,16 @@ def filter_results(
         result
         for result in results
         if selected.intersection(
-            result["team"]
+            result.team
         )
     ]
 
 
 def get_median_result(
-    results: list[dict],
-) -> tuple[dict, float]:
+    results: list,
+) -> tuple[object, float]:
     """
-    Return the middle-ranked result and the true median score.
+    Return the middle-ranked TeamResult and median score.
 
     The result list is already sorted by expected score.
     """
@@ -269,28 +236,33 @@ def get_median_result(
     middle = (count - 1) // 2
 
     if count % 2 == 1:
-        median_score = results[middle]["average_score"]
+        median_score = (
+            results[middle].average_score
+        )
     else:
         median_score = (
-            results[middle]["average_score"]
-            + results[middle + 1]["average_score"]
+            results[middle].average_score
+            + results[middle + 1].average_score
         ) / 2
 
     return results[middle], median_score
 
 
 def build_score_distribution(
-    results: list[dict],
+    results: list,
 ) -> pd.DataFrame:
     """Build score distribution for the supplied result population."""
     scores = [
-        result["average_score"] * 100
+        result.average_score * 100
         for result in results
     ]
 
     if not scores:
         return pd.DataFrame(
-            columns=["Score Range", "Teams"]
+            columns=[
+                "Score Range",
+                "Teams",
+            ]
         )
 
     minimum = int(min(scores))
@@ -333,17 +305,17 @@ def build_score_distribution(
 
 
 def build_rank_curve(
-    results: list[dict],
+    results: list,
 ) -> pd.DataFrame:
     """Build global-rank-to-score data."""
     return pd.DataFrame(
         {
             "Global Rank": [
-                result["rank"]
+                result.rank
                 for result in results
             ],
             "Expected %": [
-                result["average_score"] * 100
+                result.average_score * 100
                 for result in results
             ],
         }
@@ -351,13 +323,13 @@ def build_rank_curve(
 
 
 def build_army_frequency_dataframe(
-    results: list[dict],
+    results: list,
 ) -> pd.DataFrame:
     """Calculate army frequency within the supplied teams."""
     counter = Counter()
 
     for result in results:
-        counter.update(result["team"])
+        counter.update(result.team)
 
     if not counter:
         return pd.DataFrame(
@@ -388,19 +360,19 @@ def build_army_frequency_dataframe(
 
 
 def pool_dataframe(
-    pool: dict,
+    pool,
 ) -> pd.DataFrame:
-    """Create the assignment table for one pool."""
+    """Create the assignment table for one PoolResult."""
     rows = []
 
-    for assignment in pool["assignments"]:
+    for assignment in pool.assignments:
         rows.append(
             {
-                "Army": assignment["army"],
-                "Scenario": assignment["scenario"],
-                "Base": assignment["base_score"],
-                "Modifier": assignment["modifier"],
-                "Score": assignment["score"],
+                "Army": assignment.army,
+                "Scenario": assignment.scenario,
+                "Base": assignment.base_score,
+                "Modifier": assignment.modifier,
+                "Score": assignment.score,
             }
         )
 
@@ -412,14 +384,14 @@ def pool_dataframe(
 # ============================================================================
 
 def teams_containing_army(
-    results: list[dict],
+    results: list,
     army: str,
-) -> list[dict]:
+) -> list:
     """Return all teams containing an army."""
     return [
         result
         for result in results
-        if army in result["team"]
+        if army in result.team
     ]
 
 
@@ -508,15 +480,10 @@ def build_army_pool_summary(
 # ============================================================================
 
 if "config" not in st.session_state:
-    st.session_state.config = load_user_config()
+    st.session_state.config = load_default_config()
 
 if "results" not in st.session_state:
-    if RESULTS_FILE.exists():
-        st.session_state.results = load_results(
-            RESULTS_FILE
-        )
-    else:
-        st.session_state.results = []
+    st.session_state.results = []
 
 if "selected_rank" not in st.session_state:
     st.session_state.selected_rank = 1
@@ -525,11 +492,12 @@ if "selected_filter_army" not in st.session_state:
     st.session_state.selected_filter_army = []
 
 if "analysis_army" not in st.session_state:
-    st.session_state.analysis_army = (
-        sorted(
-            st.session_state.config["ratings"]
-        )[0]
-    )
+    st.session_state.analysis_army = sorted(
+        st.session_state.config["ratings"]
+    )[0]
+
+if "_uploaded_config_name" not in st.session_state:
+    st.session_state._uploaded_config_name = None
 
 
 # ============================================================================
@@ -576,7 +544,9 @@ with st.sidebar:
         ),
     )
 
-    selected_armies = st.session_state.selected_filter_army
+    selected_armies = (
+        st.session_state.selected_filter_army
+    )
 
     filter_mode = st.radio(
         "When multiple armies are selected",
@@ -589,38 +559,67 @@ with st.sidebar:
 
     st.subheader("Configuration")
 
-    if st.button(
-        "Save config",
-        width="stretch",
-    ):
-        try:
-            validate_config_dict(
-                st.session_state.config
-            )
+    uploaded_file = st.file_uploader(
+        "Upload config",
+        type=["json"],
+        help=(
+            "Load a previously downloaded MESBG "
+            "configuration."
+        ),
+    )
 
-            save_config(
-                st.session_state.config,
-                USER_CONFIG_FILE,
-            )
+    if uploaded_file is not None:
+        upload_name = uploaded_file.name
 
-            st.success(
-                "Configuration saved."
-            )
+        if (
+            upload_name
+            != st.session_state._uploaded_config_name
+        ):
+            try:
+                uploaded_config = json.load(
+                    uploaded_file
+                )
 
-        except Exception as exc:
-            st.error(str(exc))
+                validate_config_dict(
+                    uploaded_config
+                )
+
+                st.session_state.config = (
+                    uploaded_config
+                )
+
+                st.session_state.results = []
+
+                st.session_state.selected_rank = 1
+
+                st.session_state._uploaded_config_name = (
+                    upload_name
+                )
+
+                st.success(
+                    "Configuration loaded."
+                )
+
+                st.rerun()
+
+            except Exception as exc:
+                st.error(
+                    f"Invalid configuration: {exc}"
+                )
 
     if st.button(
         "Reset to default",
         width="stretch",
     ):
-        reset_user_config()
-
         st.session_state.config = (
-            load_user_config()
+            load_default_config()
         )
 
         st.session_state.results = []
+
+        st.session_state.selected_rank = 1
+
+        st.session_state._uploaded_config_name = None
 
         st.success(
             "Configuration reset to default."
@@ -643,23 +642,9 @@ with st.sidebar:
                     st.session_state.config
                 )
 
-                save_config(
-                    st.session_state.config,
-                    USER_CONFIG_FILE,
-                )
-
-                new_results = optimize_tournament(
-                    armies
-                )
-
-                save_results(
-                    new_results,
-                    RESULTS_FILE,
-                )
-
                 st.session_state.results = (
-                    load_results(
-                        RESULTS_FILE
+                    optimize_tournament(
+                        armies
                     )
                 )
 
@@ -674,6 +659,22 @@ with st.sidebar:
             st.error(
                 f"Recalculation failed: {exc}"
             )
+
+    st.divider()
+
+    current_config_json = json.dumps(
+        st.session_state.config,
+        indent=2,
+        ensure_ascii=False,
+    )
+
+    st.download_button(
+        "Download current config",
+        data=current_config_json,
+        file_name="mesbg_config.json",
+        mime="application/json",
+        width="stretch",
+    )
 
     st.divider()
 
@@ -903,11 +904,6 @@ with st.expander(
                     st.session_state.config
                 )
 
-                save_config(
-                    st.session_state.config,
-                    USER_CONFIG_FILE,
-                )
-
                 st.success(
                     f"Removed {remove_name}."
                 )
@@ -989,22 +985,22 @@ with summary_col1:
 with summary_col2:
     st.metric(
         "Best",
-        f"{filtered_best['average_score']:.2%}",
-        f"#{filtered_best['rank']}",
+        f"{filtered_best.average_score:.2%}",
+        f"#{filtered_best.rank}",
     )
 
 with summary_col3:
     st.metric(
         "Median",
         f"{median_score:.2%}",
-        f"~#{median_result['rank']}",
+        f"~#{median_result.rank}",
     )
 
 with summary_col4:
     st.metric(
         "Worst",
-        f"{filtered_worst['average_score']:.2%}",
-        f"#{filtered_worst['rank']}",
+        f"{filtered_worst.average_score:.2%}",
+        f"#{filtered_worst.rank}",
     )
 
 st.caption(
@@ -1060,8 +1056,9 @@ with chart_col2:
                     domain=[40, 70]
                 ),
                 axis=alt.Axis(
-                    format=".0f",
-                    labelExpr="datum.value + '%'",
+                    labelExpr=(
+                        "datum.value + '%'"
+                    ),
                 ),
             ),
             tooltip=[
@@ -1131,9 +1128,9 @@ ranking_df = pd.DataFrame(
 )
 
 
-# --------------------------------------------------------------------------
+# ============================================================================
 # Interactive ranking table
-# --------------------------------------------------------------------------
+# ============================================================================
 
 ranking_event = st.dataframe(
     ranking_df,
@@ -1158,9 +1155,9 @@ ranking_event = st.dataframe(
 )
 
 
-# --------------------------------------------------------------------------
-# Clicking a row selects that team.
-# --------------------------------------------------------------------------
+# ============================================================================
+# Clicking a row selects that team
+# ============================================================================
 
 selected_rows = ranking_event.selection.rows
 
@@ -1185,47 +1182,52 @@ if selected_rows:
 st.header("Team Details")
 
 filtered_ranks = [
-    result["rank"]
+    result.rank
     for result in filtered_results
 ]
 
 if (
     "selected_rank" not in st.session_state
-    or st.session_state.selected_rank not in filtered_ranks
+    or st.session_state.selected_rank
+    not in filtered_ranks
 ):
-    st.session_state.selected_rank = filtered_ranks[0]
+    st.session_state.selected_rank = (
+        filtered_ranks[0]
+    )
 
 
 def select_best_team() -> None:
     """Select best team in current filter."""
     st.session_state.selected_rank = (
-        filtered_results[0]["rank"]
+        filtered_results[0].rank
     )
 
 
 def select_worst_team() -> None:
     """Select worst team in current filter."""
     st.session_state.selected_rank = (
-        filtered_results[-1]["rank"]
+        filtered_results[-1].rank
     )
 
 
 result_by_rank = {
-    result["rank"]: result
+    result.rank: result
     for result in filtered_results
 }
 
 
-def format_team_option(rank: int) -> str:
+def format_team_option(
+    rank: int,
+) -> str:
     """Format one team for the selector."""
     result = result_by_rank[rank]
 
     team_name = format_team(
-        result["team"]
+        result.team
     )
 
     percentage = (
-        result["average_score"] * 100
+        result.average_score * 100
     )
 
     return (
@@ -1239,8 +1241,8 @@ selected_index = filtered_ranks.index(
     st.session_state.selected_rank
 )
 
-selection_col1, selection_col2, selection_col3 = st.columns(
-    [5, 1, 1]
+selection_col1, selection_col2, selection_col3 = (
+    st.columns([5, 1, 1])
 )
 
 with selection_col1:
@@ -1250,12 +1252,10 @@ with selection_col1:
         index=selected_index,
         format_func=format_team_option,
         key="team_selector",
-        on_change=lambda: (
-            setattr(
-                st.session_state,
-                "selected_rank",
-                st.session_state.team_selector,
-            )
+        on_change=lambda: setattr(
+            st.session_state,
+            "selected_rank",
+            st.session_state.team_selector,
         ),
     )
 
@@ -1278,27 +1278,33 @@ with selection_col3:
     )
 
 
-selected_rank = st.session_state.selected_rank
-
-selected_team = result_by_rank[selected_rank]
-
-st.subheader(
-    f"#{selected_team['rank']} — "
-    f"{format_team(selected_team['team'])}"
+selected_rank = (
+    st.session_state.selected_rank
 )
 
-team_metric_col1, team_metric_col2 = st.columns(2)
+selected_team = result_by_rank[
+    selected_rank
+]
+
+st.subheader(
+    f"#{selected_team.rank} — "
+    f"{format_team(selected_team.team)}"
+)
+
+team_metric_col1, team_metric_col2 = (
+    st.columns(2)
+)
 
 with team_metric_col1:
     st.metric(
         "Expected tournament score",
-        f"{selected_team['total_score']:.3f} / 24",
+        f"{selected_team.total_score:.3f} / 24",
     )
 
 with team_metric_col2:
     st.metric(
         "Expected win-equivalent rate",
-        f"{selected_team['average_score']:.2%}",
+        f"{selected_team.average_score:.2%}",
     )
 
 
@@ -1310,23 +1316,25 @@ st.subheader("Optimal Assignments")
 
 tabs = st.tabs(
     [
-        pool["pool"]
-        for pool in selected_team["pools"]
+        pool.pool
+        for pool in selected_team.pools
     ]
 )
 
 for tab, pool in zip(
     tabs,
-    selected_team["pools"],
+    selected_team.pools,
 ):
     with tab:
         st.metric(
             "Pool score",
-            f"{pool['total_score']:.3f} / 4",
-            f"{pool['average_score']:.2%}",
+            f"{pool.total_score:.3f} / 4",
+            f"{pool.average_score:.2%}",
         )
 
-        dataframe = pool_dataframe(pool)
+        dataframe = pool_dataframe(
+            pool
+        )
 
         st.dataframe(
             dataframe,
@@ -1375,12 +1383,17 @@ army_teams = teams_containing_army(
 
 army_ranked_teams = sorted(
     army_teams,
-    key=lambda result: result["total_score"],
+    key=lambda result: result.total_score,
     reverse=True,
 )
 
 army_best_team = army_ranked_teams[0]
 army_worst_team = army_ranked_teams[-1]
+
+
+# ============================================================================
+# Army summary
+# ============================================================================
 
 army_summary_col1, army_summary_col2, army_summary_col3, army_summary_col4 = (
     st.columns(4)
@@ -1401,15 +1414,15 @@ with army_summary_col2:
 with army_summary_col3:
     st.metric(
         "Best team",
-        f"#{army_best_team['rank']}",
-        f"{army_best_team['average_score']:.2%}",
+        f"#{army_best_team.rank}",
+        f"{army_best_team.average_score:.2%}",
     )
 
 with army_summary_col4:
     st.metric(
         "Worst team",
-        f"#{army_worst_team['rank']}",
-        f"{army_worst_team['average_score']:.2%}",
+        f"#{army_worst_team.rank}",
+        f"{army_worst_team.average_score:.2%}",
     )
 
 
@@ -1426,7 +1439,9 @@ army_scenario_df = build_army_scenario_dataframe(
     analysis_army,
 )
 
-scenario_col1, scenario_col2 = st.columns(2)
+scenario_col1, scenario_col2 = (
+    st.columns(2)
+)
 
 with scenario_col1:
     st.bar_chart(
@@ -1451,7 +1466,9 @@ with scenario_col2:
 # Army performance by pool
 # ============================================================================
 
-st.subheader("Best Scenario by Pool")
+st.subheader(
+    "Best Scenario by Pool"
+)
 
 army_pool_df = build_army_pool_summary(
     st.session_state.config,
@@ -1506,26 +1523,4 @@ st.dataframe(
             format="%.2f%%",
         ),
     },
-)
-
-
-# ============================================================================
-# Configuration download
-# ============================================================================
-
-st.divider()
-
-st.subheader("Configuration")
-
-config_json = json.dumps(
-    st.session_state.config,
-    indent=2,
-    ensure_ascii=False,
-)
-
-st.download_button(
-    "Download current config",
-    data=config_json,
-    file_name="mesbg_config.json",
-    mime="application/json",
 )
