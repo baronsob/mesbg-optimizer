@@ -482,8 +482,20 @@ def build_army_pool_summary(
 if "config" not in st.session_state:
     st.session_state.config = load_default_config()
 
+if "config" not in st.session_state:
+    st.session_state.config = load_default_config()
+
 if "results" not in st.session_state:
-    st.session_state.results = []
+    default_armies = validate_config_dict(
+        st.session_state.config
+    )
+
+    st.session_state.results = optimize_tournament(
+        default_armies
+    )
+
+if "selected_rank" not in st.session_state:
+    st.session_state.selected_rank = 1
 
 if "selected_rank" not in st.session_state:
     st.session_state.selected_rank = 1
