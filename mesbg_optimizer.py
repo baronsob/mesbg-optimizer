@@ -65,6 +65,8 @@ DATA_FILE = (
 class Army:
     name: str
     alignment: str
+    army_group: str
+    has_fly: bool
     base_score: float
     scenario_modifiers: dict[str, float]
 
@@ -125,6 +127,8 @@ def config_to_armies(config: dict) -> dict[str, Army]:
         armies[name] = Army(
             name=name,
             alignment=data["alignment"],
+            army_group=str(data.get("army_group", name)),
+            has_fly=data.get("has_fly", False),
             base_score=float(data["base_score"]),
             scenario_modifiers={
                 scenario: float(value)
@@ -190,6 +194,16 @@ def validate_armies(armies: dict[str, Army]) -> None:
 
     for army in armies.values():
 
+        if not army.army_group.strip():
+            raise ValueError(
+                f"Army group cannot be empty for {army.name}."
+            )
+
+        if not isinstance(army.has_fly, bool):
+            raise ValueError(
+                f"has_fly must be boolean for {army.name}."
+            )
+
         if army.alignment not in {"good", "evil"}:
             raise ValueError(
                 f"Invalid alignment for {army.name}: "
@@ -236,30 +250,39 @@ def validate_armies(armies: dict[str, Army]) -> None:
 # Team generation
 # ============================================================================
 
+def is_legal_team(
+    team: tuple[str, ...],
+    armies: dict[str, Army],
+) -> bool:
+    """Return whether a four-army team satisfies tournament restrictions."""
+    if len(team) != 4 or len(set(team)) != 4:
+        return False
+
+    selected = [armies[name] for name in team]
+    alignments = {army.alignment for army in selected}
+    if alignments != {"good", "evil"}:
+        return False
+
+    if sum(army.has_fly for army in selected) > 1:
+        return False
+
+    groups = [army.army_group for army in selected]
+    if len(groups) != len(set(groups)):
+        return False
+
+    return True
+
+
 def generate_teams(
     armies: dict[str, Army],
 ) -> list[tuple[str, ...]]:
-    """
-    Generate all legal four-army teams.
-
-    Tournament rule:
-        at least one Good
-        at least one Evil
-    """
-
+    """Generate all legal four-army teams under current tournament rules."""
     army_names = sorted(armies)
-    teams = []
-
-    for team in combinations(army_names, 4):
-        alignments = {
-            armies[name].alignment
-            for name in team
-        }
-
-        if alignments == {"good", "evil"}:
-            teams.append(team)
-
-    return teams
+    return [
+        team
+        for team in combinations(army_names, 4)
+        if is_legal_team(team, armies)
+    ]
 
 
 # ============================================================================

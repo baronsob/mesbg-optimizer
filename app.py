@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).parent
 DEFAULT_CONFIG_FILE = (
     BASE_DIR
     / "data"
-    / "default_config_v3.json"
+    / "default_config_v3_fly_penalized.json"
 )
 
 
@@ -60,6 +60,8 @@ def config_to_base_dataframe(
             {
                 "Army": army,
                 "Alignment": data["alignment"],
+                "Army Group": data.get("army_group", army),
+                "Fly": data.get("has_fly", False),
                 "Base Score": data["base_score"],
             }
         )
@@ -110,7 +112,10 @@ def apply_base_dataframe(
         updated["ratings"][army]["alignment"] = (
             str(row["Alignment"]).lower()
         )
-
+        updated["ratings"][army]["army_group"] = (
+            str(row["Army Group"]).strip() or army
+        )
+        updated["ratings"][army]["has_fly"] = bool(row["Fly"])
         updated["ratings"][army]["base_score"] = (
             float(row["Base Score"])
         )
@@ -482,9 +487,6 @@ def build_army_pool_summary(
 if "config" not in st.session_state:
     st.session_state.config = load_default_config()
 
-if "config" not in st.session_state:
-    st.session_state.config = load_default_config()
-
 if "results" not in st.session_state:
     default_armies = validate_config_dict(
         st.session_state.config
@@ -493,9 +495,6 @@ if "results" not in st.session_state:
     st.session_state.results = optimize_tournament(
         default_armies
     )
-
-if "selected_rank" not in st.session_state:
-    st.session_state.selected_rank = 1
 
 if "selected_rank" not in st.session_state:
     st.session_state.selected_rank = 1
@@ -731,6 +730,14 @@ with st.expander(
                 options=["good", "evil"],
                 required=True,
             ),
+            "Army Group": st.column_config.TextColumn(
+                "Army Group",
+                required=True,
+            ),
+            "Fly": st.column_config.CheckboxColumn(
+                "Fly",
+                help="Whether this army variant uses models with the Fly keyword.",
+            ),
             "Base Score": st.column_config.NumberColumn(
                 "Base Score",
                 min_value=0.45,
@@ -769,7 +776,7 @@ with st.expander(
     st.subheader("Scenario modifiers")
 
     st.caption(
-        "Values should normally be between -0.20 and +0.20."
+        "Scenario modifiers must stay between -0.20 and +0.20."
     )
 
     modifier_df = config_to_modifier_dataframe(
@@ -842,6 +849,17 @@ with st.expander(
             ["good", "evil"],
         )
 
+        new_group = st.text_input(
+            "Army group",
+            placeholder="Example: Radagast Alliance",
+            help="Use the same group for Fly and No Fly variants of one army.",
+        )
+
+        new_fly = st.checkbox(
+            "Uses Fly",
+            value=False,
+        )
+
         new_base = st.number_input(
             "Base score",
             min_value=0.45,
@@ -875,6 +893,8 @@ with st.expander(
                 "ratings"
             ][cleaned_name] = {
                 "alignment": new_alignment,
+                "army_group": (new_group.strip() or cleaned_name),
+                "has_fly": bool(new_fly),
                 "base_score": float(new_base),
                 "scenario_modifiers": {
                     scenario: 0.0
@@ -998,21 +1018,18 @@ with summary_col2:
     st.metric(
         "Best",
         f"{filtered_best.average_score:.2%}",
-        f"#{filtered_best.rank}",
     )
 
 with summary_col3:
     st.metric(
         "Median",
         f"{median_score:.2%}",
-        f"~#{median_result.rank}",
     )
 
 with summary_col4:
     st.metric(
         "Worst",
         f"{filtered_worst.average_score:.2%}",
-        f"#{filtered_worst.rank}",
     )
 
 st.caption(
@@ -1053,6 +1070,17 @@ with chart_col2:
         filtered_results
     )
 
+    score_min = float(rank_curve_df["Expected %"].min())
+    score_max = float(rank_curve_df["Expected %"].max())
+
+    if score_min == score_max:
+        padding = 1.0
+    else:
+        padding = max(0.5, (score_max - score_min) * 0.05)
+
+    chart_min = max(0.0, score_min - padding)
+    chart_max = min(100.0, score_max + padding)
+
     rank_chart = (
         alt.Chart(rank_curve_df)
         .mark_line()
@@ -1065,7 +1093,7 @@ with chart_col2:
                 "Expected %:Q",
                 title="Expected Score",
                 scale=alt.Scale(
-                    domain=[40, 70]
+                    domain=[chart_min, chart_max]
                 ),
                 axis=alt.Axis(
                     labelExpr=(
