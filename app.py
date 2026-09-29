@@ -10,6 +10,7 @@ import streamlit as st
 from mesbg_optimizer import (
     BUCKETS,
     config_to_armies,
+    expected_dp_for_score,
     load_config,
     optimize_tournament,
     validate_armies,
@@ -181,8 +182,8 @@ def result_to_ranking_row(
     return {
         "Global Rank": result.rank,
         "Team": format_team(result.team),
-        "Expected Score": result.total_score,
-        "Expected %": result.average_score * 100,
+        "Expected DP": result.total_dp,
+        "DP / Game": result.average_dp,
     }
 
 
@@ -242,12 +243,12 @@ def get_median_result(
 
     if count % 2 == 1:
         median_score = (
-            results[middle].average_score
+            results[middle].average_dp
         )
     else:
         median_score = (
-            results[middle].average_score
-            + results[middle + 1].average_score
+            results[middle].average_dp
+            + results[middle + 1].average_dp
         ) / 2
 
     return results[middle], median_score
@@ -258,7 +259,7 @@ def build_score_distribution(
 ) -> pd.DataFrame:
     """Build score distribution for the supplied result population."""
     scores = [
-        result.average_score * 100
+        result.total_dp
         for result in results
     ]
 
@@ -319,8 +320,8 @@ def build_rank_curve(
                 result.rank
                 for result in results
             ],
-            "Expected %": [
-                result.average_score * 100
+            "Total DP": [
+                result.total_dp
                 for result in results
             ],
         }
@@ -351,7 +352,7 @@ def build_army_frequency_dataframe(
         {
             "Army": army,
             "Teams": count,
-            "Frequency": count / total * 100,
+            "Frequency": count,
         }
         for army, count in counter.items()
     ]
@@ -378,6 +379,7 @@ def pool_dataframe(
                 "Base": assignment.base_score,
                 "Modifier": assignment.modifier,
                 "Score": assignment.score,
+                "Expected DP": assignment.expected_dp,
             }
         )
 
@@ -434,6 +436,7 @@ def build_army_scenario_dataframe(
                     "Scenario": scenario,
                     "Modifier": modifier,
                     "Score": score,
+                    "Expected DP": expected_dp_for_score(score),
                 }
             )
 
@@ -1016,20 +1019,20 @@ with summary_col1:
 
 with summary_col2:
     st.metric(
-        "Best",
-        f"{filtered_best.average_score:.2%}",
+        "Best Expected DP",
+        f"{filtered_best.total_dp:.2f}",
     )
 
 with summary_col3:
     st.metric(
-        "Median",
-        f"{median_score:.2%}",
+        "Median Expected DP",
+        f"{median_score * 24:.2f}",
     )
 
 with summary_col4:
     st.metric(
-        "Worst",
-        f"{filtered_worst.average_score:.2%}",
+        "Worst Expected DP",
+        f"{filtered_worst.total_dp:.2f}",
     )
 
 st.caption(
@@ -1047,7 +1050,7 @@ chart_col1, chart_col2 = st.columns(2)
 
 with chart_col1:
     st.subheader(
-        "Expected Score Distribution"
+        "Expected DP / Game Distribution"
     )
 
     distribution_df = build_score_distribution(
@@ -1063,23 +1066,12 @@ with chart_col1:
 
 with chart_col2:
     st.subheader(
-        "Global Rank vs Expected Score"
+        "Global Rank vs Total DP"
     )
 
     rank_curve_df = build_rank_curve(
         filtered_results
     )
-
-    score_min = float(rank_curve_df["Expected %"].min())
-    score_max = float(rank_curve_df["Expected %"].max())
-
-    if score_min == score_max:
-        padding = 1.0
-    else:
-        padding = max(0.5, (score_max - score_min) * 0.05)
-
-    chart_min = max(0.0, score_min - padding)
-    chart_max = min(100.0, score_max + padding)
 
     rank_chart = (
         alt.Chart(rank_curve_df)
@@ -1090,16 +1082,9 @@ with chart_col2:
                 title="Global Rank",
             ),
             y=alt.Y(
-                "Expected %:Q",
-                title="Expected Score",
-                scale=alt.Scale(
-                    domain=[chart_min, chart_max]
-                ),
-                axis=alt.Axis(
-                    labelExpr=(
-                        "datum.value + '%'"
-                    ),
-                ),
+                "Total DP:Q",
+                title="Total DP",
+                scale=alt.Scale(zero=False, padding=10),
             ),
             tooltip=[
                 alt.Tooltip(
@@ -1107,9 +1092,9 @@ with chart_col2:
                     title="Global Rank",
                 ),
                 alt.Tooltip(
-                    "Expected %:Q",
-                    title="Expected Score",
-                    format=".2f",
+                    "Total DP:Q",
+                    title="Total DP",
+                    format=".3f",
                 ),
             ],
         )
@@ -1183,13 +1168,13 @@ ranking_event = st.dataframe(
             "Global Rank",
             format="%d",
         ),
-        "Expected Score": st.column_config.NumberColumn(
-            "Expected Score",
+        "Expected DP": st.column_config.NumberColumn(
+            "Expected DP",
             format="%.3f",
         ),
-        "Expected %": st.column_config.NumberColumn(
-            "Expected %",
-            format="%.2f%%",
+        "DP / Game": st.column_config.NumberColumn(
+            "DP / Game",
+            format="%.3f",
         ),
     },
 )
@@ -1266,14 +1251,12 @@ def format_team_option(
         result.team
     )
 
-    percentage = (
-        result.average_score * 100
-    )
+    average_dp = result.average_dp
 
     return (
         f"#{rank} — "
         f"{team_name} — "
-        f"{percentage:.2f}%"
+        f"{average_dp:.3f} DP/game"
     )
 
 
@@ -1337,14 +1320,14 @@ team_metric_col1, team_metric_col2 = (
 
 with team_metric_col1:
     st.metric(
-        "Expected tournament score",
-        f"{selected_team.total_score:.3f} / 24",
+        "Expected tournament DP",
+        f"{selected_team.total_dp:.3f} / 120",
     )
 
 with team_metric_col2:
     st.metric(
-        "Expected win-equivalent rate",
-        f"{selected_team.average_score:.2%}",
+        "Expected DP / game",
+        f"{selected_team.average_dp:.3f} / 5",
     )
 
 
@@ -1367,9 +1350,9 @@ for tab, pool in zip(
 ):
     with tab:
         st.metric(
-            "Pool score",
-            f"{pool.total_score:.3f} / 4",
-            f"{pool.average_score:.2%}",
+            "Pool Expected DP",
+            f"{pool.total_dp:.3f} / 20",
+            f"{pool.average_dp:.3f} DP/game",
         )
 
         dataframe = pool_dataframe(
@@ -1391,6 +1374,10 @@ for tab, pool in zip(
                 ),
                 "Score": st.column_config.NumberColumn(
                     "Score",
+                    format="%.3f",
+                ),
+                "Expected DP": st.column_config.NumberColumn(
+                    "Expected DP",
                     format="%.3f",
                 ),
             },
@@ -1423,7 +1410,7 @@ army_teams = teams_containing_army(
 
 army_ranked_teams = sorted(
     army_teams,
-    key=lambda result: result.total_score,
+    key=lambda result: result.total_dp,
     reverse=True,
 )
 
@@ -1455,14 +1442,14 @@ with army_summary_col3:
     st.metric(
         "Best team",
         f"#{army_best_team.rank}",
-        f"{army_best_team.average_score:.2%}",
+        f"{army_best_team.total_dp:.2f} DP",
     )
 
 with army_summary_col4:
     st.metric(
         "Worst team",
         f"#{army_worst_team.rank}",
-        f"{army_worst_team.average_score:.2%}",
+        f"{army_worst_team.total_dp:.2f} DP",
     )
 
 
@@ -1524,6 +1511,10 @@ st.dataframe(
             "Best Scenario Score",
             format="%.3f",
         ),
+        "Expected DP": st.column_config.NumberColumn(
+            "Best Scenario Expected DP",
+            format="%.3f",
+        ),
     },
 )
 
@@ -1554,13 +1545,13 @@ st.dataframe(
             "Global Rank",
             format="%d",
         ),
-        "Expected Score": st.column_config.NumberColumn(
-            "Expected Score",
+        "Expected DP": st.column_config.NumberColumn(
+            "Expected DP",
             format="%.3f",
         ),
-        "Expected %": st.column_config.NumberColumn(
-            "Expected %",
-            format="%.2f%%",
+        "DP / Game": st.column_config.NumberColumn(
+            "DP / Game",
+            format="%.3f",
         ),
     },
 )

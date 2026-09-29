@@ -31,13 +31,13 @@ def main() -> None:
 
     print(
         f"Best team: "
-        f"{' + '.join(results[0].team)}"
+        f"{'+'.join(results[0].team)}"
     )
 
     print(
-        f"Expected score: "
-        f"{results[0].total_score:.3f}/24 "
-        f"({results[0].average_score:.2%})"
+        f"Expected DP: "
+        f"{results[0].total_dp:.3f}/120 "
+        f"({results[0].average_dp:.3f} DP/game)"
     )
 
     print(
