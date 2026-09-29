@@ -53,7 +53,7 @@ BUCKETS = {
 DATA_FILE = (
     Path(__file__).parent
     / "data"
-    / "default_config_v3.json"
+    / "default_config_v3_fly_penalized.json"
 )
 
 
